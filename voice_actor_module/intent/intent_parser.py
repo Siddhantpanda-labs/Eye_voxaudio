@@ -30,10 +30,16 @@ class IntentParser:
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.api_key}"
         }
-        
+
         tag_instruction = 'Use square brackets for directions like "[laughter]" or "[sigh]".'
         if engine == "chatterbox":
-            tag_instruction = 'You MUST use specific Chatterbox paralinguistic tags: "[laugh]", "[sigh]", "[cough]", "[chuckle]", "[gasp]". Use these sparingly to enhance the dialogue.'
+            tag_instruction = (
+                'Use ONLY these verified Chatterbox sound tokens (they produce actual sounds, not spoken text): '
+                '[laughter], [giggle], [guffaw], [sigh], [gasp], [groan], [cough], [sniff], '
+                '[sneeze], [inhale], [exhale], [cry], [whisper], [mumble], [clear_throat], '
+                '[uh], [um], [shhh], [humming]. '
+                'Do NOT use [laugh] or [chuckle] — they are NOT valid tokens and will be spoken as text.'
+            )
 
         tone_instruction = "Infer the most appropriate emotion and style based on the text."
         if requested_tone.lower() != "auto":

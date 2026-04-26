@@ -82,7 +82,7 @@ def synthesize(
     cb_exaggeration: float = Form(0.5),
     cb_cfg_weight: float = Form(0.5),
     cb_temperature: float = Form(0.8),
-    cb_repetition_penalty: float = Form(1.2),
+    cb_repetition_penalty: float = Form(1.5),
     cb_top_p: float = Form(1.0),
     cb_min_p: float = Form(0.05),
     ref_audio: UploadFile = File(None)
@@ -98,7 +98,7 @@ def synthesize(
         )
         
         transformer = TextTransformer()
-        conditioned_text = transformer.condition_text(text, intent)
+        conditioned_text = transformer.condition_text(text, intent, engine=engine)
         
         # Unique filename per generation
         gen_id = str(uuid.uuid4())[:8]

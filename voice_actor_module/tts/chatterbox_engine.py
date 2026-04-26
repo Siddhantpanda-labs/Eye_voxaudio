@@ -1,6 +1,8 @@
 import os
+import re
 import torch
 import torchaudio
+import numpy as np
 from pathlib import Path
 from chatterbox.tts import ChatterboxTTS
 from chatterbox.mtl_tts import ChatterboxMultilingualTTS
@@ -9,10 +11,56 @@ from chatterbox.mtl_tts import ChatterboxMultilingualTTS
 MODELS_DIR = os.path.abspath(os.path.join(os.path.dirname(os.path.dirname(__file__)), "models", "huggingface"))
 os.environ["HF_HOME"] = MODELS_DIR
 
+# Chatterbox's hardcoded max_new_tokens=1000 allows ~10-15s of speech.
+# We chunk text at sentence boundaries to stay safely within that limit.
+MAX_CHARS_PER_CHUNK = 220
+
+def _split_into_chunks(text: str, max_chars: int = MAX_CHARS_PER_CHUNK) -> list[str]:
+    """
+    Splits text into sentence-level chunks under max_chars.
+    Preserves ellipsis (...) — only splits on true sentence-ending punctuation
+    that is NOT part of a '...' sequence.
+    """
+    # Split on: a single . ! or ? (not preceded by another . and not followed by another .)
+    # followed by whitespace. This correctly leaves ... intact.
+    sentences = re.split(r'(?<!\.)([.!?])(?!\.)(?=\s)', text.strip())
+    
+    # re.split with a capturing group gives: [text, delim, text, delim, ...]
+    # Rebuild full sentences by pairing text with its delimiter
+    rebuilt = []
+    i = 0
+    parts = re.split(r'(?<!\.)([.!?])(?!\.)(?=\s)', text.strip())
+    i = 0
+    while i < len(parts):
+        chunk = parts[i]
+        if i + 1 < len(parts) and parts[i + 1] in '.!?':
+            chunk += parts[i + 1]
+            i += 2
+        else:
+            i += 1
+        if chunk.strip():
+            rebuilt.append(chunk.strip())
+
+    # Now group rebuilt sentences into max_chars buckets
+    chunks = []
+    current = ""
+    for sentence in rebuilt:
+        if current and len(current) + 1 + len(sentence) > max_chars:
+            chunks.append(current.strip())
+            current = sentence
+        else:
+            current = (current + " " + sentence).strip() if current else sentence
+
+    if current.strip():
+        chunks.append(current.strip())
+
+    return chunks if chunks else [text]
+
+
 class ChatterboxEngine:
     _instance = None       # Base model singleton
     _mtl_instance = None   # Multilingual model singleton
-    _cached_conds = {}     # Cache: {ref_audio_path: conditionals}
+    _cached_conds = {}     # Cache: {cache_key: conditionals}
 
     def __init__(self, device=None):
         if device is None:
@@ -26,7 +74,6 @@ class ChatterboxEngine:
             self.device = device
 
     def _get_base_model(self):
-        # Evict multilingual from VRAM first if loaded
         if ChatterboxEngine._mtl_instance is not None:
             print("Evicting Multilingual model from VRAM to free memory...")
             del ChatterboxEngine._mtl_instance
@@ -41,7 +88,6 @@ class ChatterboxEngine:
         return ChatterboxEngine._instance
 
     def _get_mtl_model(self):
-        # Evict base from VRAM first if loaded
         if ChatterboxEngine._instance is not None:
             print("Evicting Base model from VRAM to free memory...")
             del ChatterboxEngine._instance
@@ -55,24 +101,39 @@ class ChatterboxEngine:
             print("✅ Chatterbox Multilingual ready.")
         return ChatterboxEngine._mtl_instance
 
+    def _generate_chunk(self, model, chunk: str, gen_kwargs: dict, exaggeration, cfg_weight, temperature, repetition_penalty, top_p, min_p) -> np.ndarray:
+        """Generates audio for a single text chunk and returns raw numpy array."""
+        wav = model.generate(
+            chunk,
+            exaggeration=exaggeration,
+            cfg_weight=cfg_weight,
+            temperature=temperature,
+            repetition_penalty=repetition_penalty,
+            top_p=top_p,
+            min_p=min_p,
+            **gen_kwargs
+        )
+        if wav.ndim == 2:
+            wav = wav.squeeze(0)
+        return wav.cpu().numpy()
+
     def generate_audio(
         self,
         text: str,
         output_path: str,
         audio_prompt_path: str = None,
         language: str = "english",
-        # --- Chatterbox Advanced Parameters ---
-        exaggeration: float = 0.5,       # Emotion intensity: 0=flat, 1=very expressive
-        cfg_weight: float = 0.5,         # Clone fidelity: 0=creative, 1=exact clone
-        temperature: float = 0.8,        # Spontaneity: 0.1=robotic, 1.5=very human
-        repetition_penalty: float = 1.2, # Loop guard: prevents unnatural repetitions
-        top_p: float = 1.0,              # Vocab breadth: nucleus sampling
-        min_p: float = 0.05,             # Precision: minimum token probability
+        exaggeration: float = 0.5,
+        cfg_weight: float = 0.5,
+        temperature: float = 0.8,
+        repetition_penalty: float = 1.5,
+        top_p: float = 1.0,
+        min_p: float = 0.05,
     ):
         """
         Generates audio using Chatterbox.
-        Automatically switches between Base and Multilingual models based on language.
-        Caches voice conditionals so the reference audio is only processed once.
+        Splits long texts into sentence chunks to bypass the library's
+        hardcoded max_new_tokens=1000 limit, then concatenates the results.
         """
         try:
             lang_map = {
@@ -93,14 +154,12 @@ class ChatterboxEngine:
                 gen_kwargs = {}
 
             # --- Pre-baked Conditionals Cache ---
-            # Process reference audio once and reuse for subsequent generates
             if audio_prompt_path and os.path.exists(audio_prompt_path):
                 cache_key = f"{audio_prompt_path}:{exaggeration}"
                 if cache_key not in ChatterboxEngine._cached_conds:
                     print(f"Processing voice profile from: {audio_prompt_path} (exaggeration={exaggeration})")
                     model.prepare_conditionals(audio_prompt_path, exaggeration=exaggeration)
                     ChatterboxEngine._cached_conds[cache_key] = model.conds
-                    # Limit cache to last 3 profiles to avoid memory bloat
                     if len(ChatterboxEngine._cached_conds) > 3:
                         oldest = next(iter(ChatterboxEngine._cached_conds))
                         del ChatterboxEngine._cached_conds[oldest]
@@ -108,33 +167,29 @@ class ChatterboxEngine:
                     print(f"Using cached voice profile for: {audio_prompt_path}")
                     model.conds = ChatterboxEngine._cached_conds[cache_key]
 
-                wav = model.generate(
-                    text,
-                    exaggeration=exaggeration,
-                    cfg_weight=cfg_weight,
-                    temperature=temperature,
-                    repetition_penalty=repetition_penalty,
-                    top_p=top_p,
-                    min_p=min_p,
-                    **gen_kwargs
-                )
-            else:
-                wav = model.generate(
-                    text,
-                    exaggeration=exaggeration,
-                    cfg_weight=cfg_weight,
-                    temperature=temperature,
-                    repetition_penalty=repetition_penalty,
-                    top_p=top_p,
-                    min_p=min_p,
-                    **gen_kwargs
-                )
+            # --- Chunked Generation ---
+            chunks = _split_into_chunks(text)
+            print(f"Chatterbox generating {len(chunks)} chunk(s) for {len(text)} chars of text...")
 
-            if wav.ndim == 1:
-                wav = wav.unsqueeze(0)
+            audio_parts = []
+            silence = np.zeros(int(model.sr * 0.15), dtype=np.float32)  # 150ms silence between chunks
 
-            torchaudio.save(output_path, wav.cpu(), model.sr)
-            print(f"✅ Audio saved to {output_path}")
+            for i, chunk in enumerate(chunks):
+                print(f"  Chunk {i+1}/{len(chunks)}: '{chunk[:60]}{'...' if len(chunk) > 60 else ''}'")
+                chunk_wav = self._generate_chunk(
+                    model, chunk, gen_kwargs,
+                    exaggeration, cfg_weight, temperature, repetition_penalty, top_p, min_p
+                )
+                audio_parts.append(chunk_wav)
+                if i < len(chunks) - 1:
+                    audio_parts.append(silence)  # Add brief pause between sentences
+
+            # Concatenate all chunks into one continuous audio
+            final_wav = np.concatenate(audio_parts)
+            wav_tensor = torch.from_numpy(final_wav).unsqueeze(0)
+
+            torchaudio.save(output_path, wav_tensor, model.sr)
+            print(f"✅ Audio saved to {output_path} ({len(chunks)} chunk(s), {len(final_wav)/model.sr:.1f}s)")
             return output_path
 
         except Exception as e:
