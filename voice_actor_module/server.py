@@ -1,0 +1,212 @@
+import os
+import time
+import uuid
+import uvicorn
+from fastapi import FastAPI, HTTPException, Form, UploadFile, File
+from pydantic import BaseModel
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, JSONResponse
+from intent.intent_parser import IntentParser
+from conditioning.text_transform import TextTransformer
+from tts.elevenlabs_engine import ElevenLabsEngine
+from fx.audio_fx import AudioFX
+import requests as http_requests
+
+app = FastAPI()
+
+static_dir = os.path.join(os.path.dirname(__file__), "static")
+output_dir = os.path.join(static_dir, "outputs")
+os.makedirs(output_dir, exist_ok=True)
+
+app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+class SynthesisRequest(BaseModel):
+    text: str
+    voice_id: str
+    tone: str = "auto"
+    apply_fx: bool = False
+    hesitation: int = 0
+    breathiness: int = 0
+
+def get_elevenlabs_key():
+    key_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "elevenlabs.key.txt")
+    if os.path.exists(key_path):
+        with open(key_path, 'r') as f:
+            return f.read().strip()
+    return os.environ.get("ELEVENLABS_API_KEY")
+
+@app.get("/")
+def read_root():
+    return FileResponse(os.path.join(static_dir, "index.html"))
+
+@app.get("/api/voices")
+def list_voices():
+    """Fetch available voices from ElevenLabs API."""
+    api_key = get_elevenlabs_key()
+    if not api_key:
+        raise HTTPException(status_code=500, detail="ElevenLabs API key missing.")
+    try:
+        resp = http_requests.get(
+            "https://api.elevenlabs.io/v1/voices",
+            headers={"xi-api-key": api_key}
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        voices = []
+        for v in data.get("voices", []):
+            voices.append({
+                "voice_id": v["voice_id"],
+                "name": v["name"],
+                "category": v.get("category", "unknown"),
+                "labels": v.get("labels", {}),
+                "preview_url": v.get("preview_url", "")
+            })
+        return {"voices": voices}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/synthesize")
+def synthesize(
+    text: str = Form(...),
+    engine: str = Form("elevenlabs"),
+    voice_id: str = Form(""),
+    tone: str = Form("auto"),
+    apply_fx: bool = Form(False),
+    hesitation: int = Form(0),
+    breathiness: int = Form(0),
+    el_stability: float = Form(0.5),
+    el_similarity: float = Form(0.75),
+    el_style: float = Form(0.0),
+    el_boost: bool = Form(True),
+    # Chatterbox advanced parameters (defaults match Chatterbox source)
+    cb_exaggeration: float = Form(0.5),
+    cb_cfg_weight: float = Form(0.5),
+    cb_temperature: float = Form(0.8),
+    cb_repetition_penalty: float = Form(1.2),
+    cb_top_p: float = Form(1.0),
+    cb_min_p: float = Form(0.05),
+    ref_audio: UploadFile = File(None)
+):
+    try:
+        intent_parser = IntentParser()
+        intent = intent_parser.parse_intent(
+            text, 
+            engine=engine,
+            requested_tone=tone,
+            hesitation=hesitation,
+            breathiness=breathiness
+        )
+        
+        transformer = TextTransformer()
+        conditioned_text = transformer.condition_text(text, intent)
+        
+        # Unique filename per generation
+        gen_id = str(uuid.uuid4())[:8]
+        raw_filename = f"raw_{gen_id}.wav"
+        raw_path = os.path.join(output_dir, raw_filename)
+        
+        if engine == "elevenlabs":
+            api_key = get_elevenlabs_key()
+            if not api_key:
+                raise HTTPException(status_code=500, detail="ElevenLabs API key missing.")
+                
+            tts_engine = ElevenLabsEngine(api_key=api_key)
+            tts_engine.generate_audio(
+                text=conditioned_text,
+                voice_id=voice_id,
+                output_path=raw_path,
+                stability=el_stability,
+                similarity=el_similarity,
+                style=el_style,
+                speaker_boost=el_boost
+            )
+            
+        elif engine == "chatterbox":
+            from tts.chatterbox_engine import ChatterboxEngine
+            import shutil as shutil_mod
+            import subprocess
+            
+            if not ref_audio:
+                raise HTTPException(status_code=400, detail="A reference audio file is required for Chatterbox voice cloning.")
+            
+            # Save the uploaded file with its original extension
+            ext = os.path.splitext(ref_audio.filename or "")[1] or ".wav"
+            uploaded_path = os.path.join(output_dir, f"ref_upload_{gen_id}{ext}")
+            with open(uploaded_path, "wb") as f:
+                shutil_mod.copyfileobj(ref_audio.file, f)
+            
+            # Convert to proper WAV format (22050Hz mono) using FFmpeg
+            speaker_wav = os.path.join(output_dir, f"ref_{gen_id}.wav")
+            ffmpeg_cmd = r"D:\Program Files\ThirdParty\ffmpeg\bin\ffmpeg.exe"
+            if not os.path.exists(ffmpeg_cmd):
+                import shutil
+                ffmpeg_cmd = shutil.which("ffmpeg") or "ffmpeg"
+            
+            try:
+                print(f"Converting reference audio to WAV for Chatterbox: {speaker_wav}")
+                subprocess.run([
+                    ffmpeg_cmd, "-y",
+                    "-i", uploaded_path,
+                    "-ar", "22050",   # 22050Hz is standard for these models
+                    "-ac", "1",       # Mono
+                    "-sample_fmt", "s16",
+                    speaker_wav
+                ], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            except Exception as e:
+                print(f"FFmpeg conversion failed: {e}")
+                # Fallback: just rename the file
+                os.rename(uploaded_path, speaker_wav)
+            
+            # Clean up uploaded original
+            if os.path.exists(uploaded_path):
+                os.remove(uploaded_path)
+                
+            chatterbox = ChatterboxEngine()
+            chatterbox.generate_audio(
+                text=conditioned_text,
+                output_path=raw_path,
+                audio_prompt_path=speaker_wav,
+                language=intent.get("language", "english"),
+                exaggeration=cb_exaggeration,
+                cfg_weight=cb_cfg_weight,
+                temperature=cb_temperature,
+                repetition_penalty=cb_repetition_penalty,
+                top_p=cb_top_p,
+                min_p=cb_min_p,
+            )
+            
+            # Clean up the converted reference file
+            if os.path.exists(speaker_wav):
+                os.remove(speaker_wav)
+        else:
+            raise HTTPException(status_code=400, detail="Unknown engine selected.")
+        
+        final_filename = f"take_{gen_id}.wav"
+        final_path = os.path.join(output_dir, final_filename)
+        
+        if apply_fx:
+            try:
+                fx = AudioFX()
+                fx.apply_effects(input_path=raw_path, output_path=final_path)
+                if os.path.exists(raw_path):
+                    os.remove(raw_path)
+            except Exception as e:
+                print(f"FX failed: {e}")
+                if os.path.exists(final_path) and os.path.getsize(final_path) == 0:
+                    os.remove(final_path)
+                os.rename(raw_path, final_path)
+        else:
+            os.rename(raw_path, final_path)
+        
+        return {
+            "id": gen_id,
+            "intent": intent,
+            "conditioned_text": conditioned_text,
+            "audio_url": f"/static/outputs/{final_filename}",
+            "timestamp": time.strftime("%I:%M %p")
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="127.0.0.1", port=8000)

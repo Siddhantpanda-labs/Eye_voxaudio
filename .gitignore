@@ -1,0 +1,59 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environment
+voice_actor_module/venv/
+venv/
+ENV/
+env/
+
+# Models (Large Files)
+voice_actor_module/models/
+models/
+
+# Generated Audio & Temporary Files
+voice_actor_module/static/outputs/
+*.wav
+*.mp3
+*.mp4
+*.pth
+*.safetensors
+*.json
+*.pt
+
+# Secrets & Keys
+*.key
+*.key.txt
+elevenlabs.key.txt
+.env
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
