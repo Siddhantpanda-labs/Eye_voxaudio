@@ -37,7 +37,8 @@ class TextTransformer:
             cleaned = re.sub(r'  +', ' ', cleaned).strip()
             return cleaned
 
-        # For cloud engines (ElevenLabs etc.), keep the metadata header
-        emotion = intent.get("emotion", "calm")
-        style = intent.get("style", "narration")
-        return f"[{emotion} tone, {style}] {refined_text}"
+        # For ElevenLabs, strip any bracket tags (like [laughter]) as it will read them out loud,
+        # and do not prepend the intent style.
+        cleaned = re.sub(r'\[.*?\]', '', refined_text)
+        cleaned = re.sub(r'  +', ' ', cleaned).strip()
+        return cleaned

@@ -47,9 +47,15 @@
         <div class="main-layout">
             <!-- Left Panel: Controls -->
             <section class="panel panel-controls">
-                <div class="panel-header">
+                <div class="panel-header" style="display: flex; justify-content: space-between; align-items: center;">
                     <h2>Director's Console</h2>
+                    <div class="mode-switcher" style="display: flex; gap: 4px; background: var(--bg-input); padding: 4px; border-radius: var(--radius-sm); border: 1px solid var(--border-default);">
+                        <button id="mode-script-btn" style="padding: 4px 12px; border: none; border-radius: var(--radius-sm); cursor: pointer; background: var(--bg-elevated); color: var(--text-primary); font-size: 0.8rem;">Script</button>
+                        <button id="mode-conv-btn" style="padding: 4px 12px; border: none; border-radius: var(--radius-sm); cursor: pointer; background: transparent; color: var(--text-muted); font-size: 0.8rem;">Conversation</button>
+                    </div>
                 </div>
+
+                <div id="script-mode-container">
 
                 <div class="form-group">
                     <label for="script">Script</label>
@@ -93,10 +99,38 @@
                             <option value="chatterbox">Chatterbox Turbo (Local)</option>
                         </select>
                     </div>
-                    <div class="form-group" id="xtts-ref-group" style="display:none;">
-                        <label for="ref-audio">Clone Target (Reference Audio)</label>
-                        <input type="file" id="ref-audio" accept="audio/*,video/mp4"
-                            style="font-size:0.8rem; padding:8px; background:var(--bg-input); border-radius:var(--radius-sm); border:1px solid var(--border-default); color:var(--text-primary); width:100%;">
+                    <div class="form-group" id="cb-voice-group" style="display:none;">
+                        <label for="cb-voice">Clone Target (Voice)</label>
+                        <select id="cb-voice" style="margin-bottom: 8px;">
+                            <option value="">-- Upload New Reference --</option>
+                            <!-- Saved voices will be injected here -->
+                        </select>
+                        <div id="cb-upload-section">
+                            <input type="file" id="ref-audio" accept="audio/*,video/mp4"
+                                style="font-size:0.8rem; padding:8px; background:var(--bg-input); border-radius:var(--radius-sm); border:1px solid var(--border-default); color:var(--text-primary); width:100%; margin-bottom: 8px;">
+                            <div style="display: flex; gap: 8px;">
+                                <input type="text" id="cb-new-voice-name" placeholder="Voice Name" style="font-size:0.8rem; padding:8px; background:var(--bg-input); border-radius:var(--radius-sm); border:1px solid var(--border-default); color:var(--text-primary); flex-grow: 1;">
+                                <button type="button" id="cb-save-voice-btn" style="padding: 8px 12px; background: var(--bg-elevated); color: var(--text-primary); border: 1px solid var(--border-default); border-radius: var(--radius-sm); cursor: pointer; font-size: 0.8rem;">Save</button>
+                            </div>
+                        </div>
+                        <div id="cb-delete-section" style="display: none; margin-top: 8px;">
+                            <button type="button" id="cb-delete-voice-btn" style="padding: 8px 12px; background: rgba(239, 68, 68, 0.2); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.5); border-radius: var(--radius-sm); cursor: pointer; font-size: 0.8rem; width: 100%;">Delete Saved Voice</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="target-language">Language</label>
+                        <select id="target-language">
+                            <option value="english">English</option>
+                            <option value="hindi">Hindi</option>
+                            <option value="french">French</option>
+                            <option value="german">German</option>
+                            <option value="spanish">Spanish</option>
+                            <option value="japanese">Japanese</option>
+                            <option value="chinese">Chinese</option>
+                        </select>
                     </div>
                 </div>
 
@@ -162,6 +196,7 @@
                         </div>
                         <input type="range" id="el-style" min="0" max="100" value="0">
                     </div>
+
                     <div class="form-row" style="margin-top: 4px;">
                         <label class="toggle-label">
                             <input type="checkbox" id="el-boost" checked>
@@ -210,6 +245,49 @@
                         Studio FX (EQ + Compression + Gate)
                     </label>
                 </div>
+                </div> <!-- End script-mode-container -->
+
+                <div id="conv-mode-container" style="display: none;">
+                    <div id="conv-lines-container"></div>
+                    <button id="add-conv-line-btn" style="width: 100%; padding: 12px; background: var(--bg-input); color: var(--text-primary); border: 1px dashed var(--border-default); border-radius: var(--radius-md); cursor: pointer; margin-bottom: 12px; transition: background 0.2s;">
+                        + Add Conversation Line
+                    </button>
+                </div>
+
+                <template id="conv-line-template">
+                    <div class="conv-line" style="background: var(--bg-elevated); padding: 12px; border-radius: var(--radius-md); margin-bottom: 12px; border: 1px solid var(--border-default); display: flex; flex-direction: column; gap: 12px; position: relative;">
+                        <button class="remove-line-btn" style="position: absolute; top: 12px; right: 12px; background: transparent; border: none; color: #ef4444; cursor: pointer; padding: 4px; display: flex; align-items: center; justify-content: center; transition: transform var(--transition); z-index: 2;" title="Delete Line" onmouseover="this.style.transform='scale(1.1)'" onmouseout="this.style.transform='scale(1)'">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                        </button>
+                        <div class="form-row" style="margin-bottom: 0; padding-right: 32px; display: flex; gap: 12px;">
+                            <div class="form-group" style="flex: 1; margin-bottom: 0;">
+                                <select class="conv-engine" style="padding: 10px 12px; font-size: 0.8rem; background-position: right 8px center;">
+                                    <option value="elevenlabs">ElevenLabs</option>
+                                    <option value="chatterbox">Chatterbox</option>
+                                </select>
+                            </div>
+                            <div class="form-group" style="flex: 1.5; margin-bottom: 0;">
+                                <select class="conv-voice" style="padding: 10px 12px; font-size: 0.8rem; background-position: right 8px center;">
+                                    <option value="">Loading...</option>
+                                </select>
+                            </div>
+                            <div class="form-group" style="flex: 1; margin-bottom: 0;">
+                                <select class="conv-language" style="padding: 10px 12px; font-size: 0.8rem; background-position: right 8px center;">
+                                    <option value="english">English</option>
+                                    <option value="hindi">Hindi</option>
+                                    <option value="french">French</option>
+                                    <option value="japanese">Japanese</option>
+                                    <option value="spanish">Spanish</option>
+                                    <option value="german">German</option>
+                                    <option value="chinese">Chinese</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="form-group" style="width: 100%; margin-bottom: 0;">
+                            <textarea class="conv-text" rows="2" placeholder="Type dialogue..." style="width: 100%; resize: vertical; padding: 10px 12px; font-size: 0.85rem; line-height: 1.4;"></textarea>
+                        </div>
+                    </div>
+                </template>
 
                 <button id="generate-btn" class="btn-generate">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

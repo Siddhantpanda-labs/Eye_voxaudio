@@ -17,14 +17,14 @@ class IntentParser:
                 return f.read().strip()
         return os.environ.get("OPENAI_API_KEY")
 
-    def parse_intent(self, text: str, engine: str = "elevenlabs", requested_tone: str = "auto", hesitation: int = 0, breathiness: int = 0) -> dict:
+    def parse_intent(self, text: str, engine: str = "elevenlabs", requested_tone: str = "auto", hesitation: int = 0, breathiness: int = 0, target_language: str = "english", translate_to_native: bool = False) -> dict:
         if self.use_llm and self.api_key:
-            return self._parse_with_llm(text, engine, requested_tone, hesitation, breathiness)
+            return self._parse_with_llm(text, engine, requested_tone, hesitation, breathiness, target_language, translate_to_native)
         else:
             print("Warning: LLM API key not found, falling back to rules.")
-            return self._parse_with_rules(text)
+            return self._parse_with_rules(text, target_language)
 
-    def _parse_with_llm(self, text: str, engine: str, requested_tone: str, hesitation: int, breathiness: int) -> dict:
+    def _parse_with_llm(self, text: str, engine: str, requested_tone: str, hesitation: int, breathiness: int, target_language: str, translate_to_native: bool) -> dict:
         url = "https://api.openai.com/v1/chat/completions"
         headers = {
             "Content-Type": "application/json",
@@ -62,6 +62,12 @@ class IntentParser:
         if director_notes:
             director_text = "\n\nCRITICAL DIRECTOR'S NOTES FOR TEXT REFINEMENT:\n- " + "\n- ".join(director_notes)
 
+        translation_instruction = ""
+        if translate_to_native:
+            translation_instruction = f"\n- CRITICAL: You MUST translate the user's text into the natural, conversational native script of {target_language.upper()} (e.g., Devanagari for Hindi, Kanji/Kana for Japanese, Cyrillic for Russian, etc.). Do not output romanized/English characters for the spoken text unless it is an English loan word.\n- Maintain the requested emotion and style during translation."
+        else:
+            translation_instruction = f"\n- The target language is {target_language.upper()}. Do not translate the text into native script, but format it optimally for a {target_language} TTS engine."
+
         system_prompt = f"""You are an expert AI voice acting director and script supervisor. 
 Your job is to analyze the user's text and output optimal vocal delivery parameters.
 
@@ -71,7 +77,7 @@ Crucially, you must also REFINE the text for the voice actor (TTS).
 - Example: (shouts) -> CONVERT THE FOLLOWING TEXT TO ALL CAPS.
 - Add dramatic pauses using '...' where appropriate.
 - Add commas for natural breathing.
-- If the text is in Hinglish (Hindi written in English) or pure Hindi, ensure the spelling and punctuation guide the TTS to pronounce it with a natural Indian/Hindi accent. Feel free to tweak spelling to ensure the TTS reads the Hindi correctly.
+- If the text is in Hinglish (Hindi written in English) or pure Hindi, ensure the spelling and punctuation guide the TTS to pronounce it with a natural Indian/Hindi accent. Feel free to tweak spelling to ensure the TTS reads the Hindi correctly.{translation_instruction}
 - Do NOT use parentheses ( ) for sounds; use [ ] instead.
 - Do NOT completely change the core meaning, just enhance the pacing and delivery.{director_text}
 
@@ -83,8 +89,8 @@ Output ONLY valid JSON matching this schema:
   "intensity": 0.0 to 1.0,
   "pacing": 0.5 to 1.5,
   "style": "whisper | narration | dramatic | conversational | shouting",
-  "language": "english | hinglish | hindi",
-  "refined_text": "The enhanced script with pauses, expression tags, and optimal TTS formatting"
+  "language": "{target_language.lower()}",
+  "refined_text": "The enhanced script with pauses, expression tags, and optimal TTS formatting (TRANSLATED TO {target_language.upper()} NATIVE SCRIPT IF REQUESTED)"
 }}"""
 
         data = {
@@ -108,12 +114,12 @@ Output ONLY valid JSON matching this schema:
             print(f"LLM parsing failed: {e}")
             return self._parse_with_rules(text)
 
-    def _parse_with_rules(self, text: str) -> dict:
+    def _parse_with_rules(self, text: str, target_language: str) -> dict:
         return {
             "emotion": "calm",
             "intensity": 0.5,
             "pacing": 1.0,
             "style": "narration",
-            "language": "english",
+            "language": target_language.lower(),
             "refined_text": text
         }

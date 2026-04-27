@@ -15,12 +15,28 @@ const sessionHistory = [];
 
 // ---- DOM ----
 const scriptInput = document.getElementById('script');
+const modeScriptBtn = document.getElementById('mode-script-btn');
+const modeConvBtn = document.getElementById('mode-conv-btn');
+const scriptModeContainer = document.getElementById('script-mode-container');
+const convModeContainer = document.getElementById('conv-mode-container');
+const convLinesContainer = document.getElementById('conv-lines-container');
+const addConvLineBtn = document.getElementById('add-conv-line-btn');
+const convLineTemplate = document.getElementById('conv-line-template');
+
+let currentMode = 'script';
 const engineSelect = document.getElementById('engine');
-const xttsRefGroup = document.getElementById('xtts-ref-group');
+const cbVoiceGroup = document.getElementById('cb-voice-group');
+const cbVoiceSelect = document.getElementById('cb-voice');
+const cbUploadSection = document.getElementById('cb-upload-section');
+const cbDeleteSection = document.getElementById('cb-delete-section');
+const cbNewVoiceName = document.getElementById('cb-new-voice-name');
+const cbSaveVoiceBtn = document.getElementById('cb-save-voice-btn');
+const cbDeleteVoiceBtn = document.getElementById('cb-delete-voice-btn');
 const refAudioInput = document.getElementById('ref-audio');
 const voiceGroup = document.getElementById('voice-group');
 const voiceSelect = document.getElementById('voice');
 const toneSelect = document.getElementById('tone');
+const targetLanguageSelect = document.getElementById('target-language');
 const fxCheckbox = document.getElementById('apply-fx');
 const hesitationSlider = document.getElementById('hesitation');
 const hesitationVal = document.getElementById('hesitation-val');
@@ -87,6 +103,155 @@ async function loadVoices() {
 }
 loadVoices();
 
+async function loadCbVoices() {
+    try {
+        const resp = await fetch('/api/chatterbox/voices');
+        const data = await resp.json();
+        
+        cbVoiceSelect.innerHTML = '<option value="">-- Upload New Reference --</option>';
+        data.voices.forEach(v => {
+            const opt = document.createElement('option');
+            opt.value = v.id;
+            opt.textContent = v.name;
+            cbVoiceSelect.appendChild(opt);
+        });
+        updateCbVoiceUI();
+    } catch (e) {
+        console.error('Failed to load CB voices:', e);
+    }
+}
+loadCbVoices();
+
+function updateCbVoiceUI() {
+    if (cbVoiceSelect.value) {
+        cbUploadSection.style.display = 'none';
+        cbDeleteSection.style.display = 'block';
+    } else {
+        cbUploadSection.style.display = 'block';
+        cbDeleteSection.style.display = 'none';
+    }
+}
+cbVoiceSelect.addEventListener('change', updateCbVoiceUI);
+
+// ---- Mode Switching ----
+modeScriptBtn.addEventListener('click', () => {
+    currentMode = 'script';
+    modeScriptBtn.style.background = 'var(--bg-elevated)';
+    modeScriptBtn.style.color = 'var(--text-primary)';
+    modeConvBtn.style.background = 'transparent';
+    modeConvBtn.style.color = 'var(--text-muted)';
+    
+    scriptModeContainer.style.display = 'block';
+    convModeContainer.style.display = 'none';
+});
+
+modeConvBtn.addEventListener('click', () => {
+    currentMode = 'conversation';
+    modeConvBtn.style.background = 'var(--bg-elevated)';
+    modeConvBtn.style.color = 'var(--text-primary)';
+    modeScriptBtn.style.background = 'transparent';
+    modeScriptBtn.style.color = 'var(--text-muted)';
+    
+    scriptModeContainer.style.display = 'none';
+    convModeContainer.style.display = 'block';
+    
+    if (convLinesContainer.children.length === 0) {
+        addConvLine();
+    }
+});
+
+// ---- Conversation Logic ----
+function addConvLine() {
+    const clone = convLineTemplate.content.cloneNode(true);
+    const lineEl = clone.querySelector('.conv-line');
+    const engineSelect = clone.querySelector('.conv-engine');
+    const voiceSelect = clone.querySelector('.conv-voice');
+    const removeBtn = clone.querySelector('.remove-line-btn');
+    
+    function populateVoices() {
+        voiceSelect.innerHTML = '';
+        if (engineSelect.value === 'elevenlabs') {
+            Array.from(document.getElementById('voice').options).forEach(o => {
+                const opt = document.createElement('option');
+                opt.value = o.value;
+                opt.textContent = o.textContent;
+                voiceSelect.appendChild(opt);
+            });
+        } else {
+            Array.from(document.getElementById('cb-voice').options).forEach(o => {
+                if (o.value) { // Skip the upload option
+                    const opt = document.createElement('option');
+                    opt.value = o.value;
+                    opt.textContent = o.textContent;
+                    voiceSelect.appendChild(opt);
+                }
+            });
+        }
+    }
+    
+    engineSelect.addEventListener('change', populateVoices);
+    populateVoices(); // init
+    
+    removeBtn.addEventListener('click', () => {
+        lineEl.remove();
+    });
+    
+    convLinesContainer.appendChild(clone);
+}
+
+addConvLineBtn.addEventListener('click', addConvLine);
+
+cbSaveVoiceBtn.addEventListener('click', async () => {
+    const name = cbNewVoiceName.value.trim();
+    if (!name) return alert("Please enter a voice name");
+    if (refAudioInput.files.length === 0) return alert("Please select an audio file");
+    
+    cbSaveVoiceBtn.disabled = true;
+    cbSaveVoiceBtn.textContent = "Saving...";
+    try {
+        const formData = new FormData();
+        formData.append('name', name);
+        formData.append('ref_audio', refAudioInput.files[0]);
+        
+        const resp = await fetch('/api/chatterbox/voices', {
+            method: 'POST',
+            body: formData
+        });
+        if (!resp.ok) throw new Error(await resp.text());
+        const data = await resp.json();
+        
+        await loadCbVoices();
+        cbVoiceSelect.value = data.id;
+        updateCbVoiceUI();
+        
+        cbNewVoiceName.value = '';
+        refAudioInput.value = '';
+        alert("Voice saved successfully!");
+    } catch(e) {
+        alert("Error saving voice: " + e.message);
+    } finally {
+        cbSaveVoiceBtn.disabled = false;
+        cbSaveVoiceBtn.textContent = "Save";
+    }
+});
+
+cbDeleteVoiceBtn.addEventListener('click', async () => {
+    const voiceId = cbVoiceSelect.value;
+    if (!voiceId) return;
+    if (!confirm("Delete this saved voice?")) return;
+    
+    try {
+        const resp = await fetch(`/api/chatterbox/voices/${voiceId}`, { method: 'DELETE' });
+        if (!resp.ok) throw new Error(await resp.text());
+        
+        await loadCbVoices();
+        cbVoiceSelect.value = '';
+        updateCbVoiceUI();
+    } catch(e) {
+        alert("Error deleting voice: " + e.message);
+    }
+});
+
 // ---- Expression Tag Palette ----
 document.querySelectorAll('.tag-btn').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -132,7 +297,7 @@ elStyleSlider.addEventListener('input', () => {
 // ---- Engine Toggle ----
 engineSelect.addEventListener('change', () => {
     const isChatterbox = engineSelect.value === 'chatterbox';
-    xttsRefGroup.style.display = isChatterbox ? 'flex' : 'none';
+    cbVoiceGroup.style.display = isChatterbox ? 'flex' : 'none';
     voiceGroup.style.display = isChatterbox ? 'none' : 'flex';
     elControls.style.display = isChatterbox ? 'none' : 'flex';
     cbControls.style.display = isChatterbox ? 'flex' : 'none';
@@ -297,8 +462,67 @@ startVisualizerAnimation();
 // ============================================
 
 generateBtn.addEventListener('click', async () => {
-    const text = scriptInput.value.trim();
-    if (!text) return;
+    let endpoint = '/api/synthesize';
+    let reqBody = null;
+    let reqHeaders = {};
+    let textToLog = "";
+
+    if (currentMode === 'script') {
+        const text = scriptInput.value.trim();
+        if (!text) return;
+        textToLog = text;
+
+        const formData = new FormData();
+        formData.append('text', text);
+        formData.append('engine', engineSelect.value);
+        formData.append('voice_id', voiceSelect.value);
+        formData.append('tone', toneSelect.value);
+        formData.append('target_language', targetLanguageSelect.value);
+        formData.append('translate_text', true);
+        formData.append('apply_fx', fxCheckbox.checked);
+        formData.append('hesitation', hesitationSlider.value);
+        formData.append('breathiness', breathinessSlider.value);
+        
+        if (engineSelect.value === 'elevenlabs') {
+            formData.append('el_stability', (elStabilitySlider.value / 100).toFixed(2));
+            formData.append('el_similarity', (elSimilaritySlider.value / 100).toFixed(2));
+            formData.append('el_style', (elStyleSlider.value / 100).toFixed(2));
+            formData.append('el_boost', elBoostCheckbox.checked);
+        }
+
+        if (engineSelect.value === 'chatterbox') {
+            if (cbVoiceSelect.value) {
+                formData.append('cb_voice_id', cbVoiceSelect.value);
+            } else if (refAudioInput.files.length > 0) {
+                formData.append('ref_audio', refAudioInput.files[0]);
+            }
+            formData.append('cb_exaggeration', (cbExaggerationSlider.value / 100).toFixed(2));
+            formData.append('cb_cfg_weight', (cbCfgWeightSlider.value / 100).toFixed(2));
+            formData.append('cb_temperature', (cbTemperatureSlider.value / 100).toFixed(2));
+            formData.append('cb_repetition_penalty', (cbRepPenaltySlider.value / 100).toFixed(2));
+        }
+        reqBody = formData;
+    } else {
+        const lines = [];
+        const lineEls = convLinesContainer.querySelectorAll('.conv-line');
+        for (let el of lineEls) {
+            const txt = el.querySelector('.conv-text').value.trim();
+            if (txt) {
+                lines.push({
+                    text: txt,
+                    engine: el.querySelector('.conv-engine').value,
+                    voice_id: el.querySelector('.conv-voice').value,
+                    target_language: el.querySelector('.conv-language').value
+                });
+            }
+        }
+        if (lines.length === 0) return alert('Add at least one line of dialogue.');
+        
+        endpoint = '/api/synthesize_conversation';
+        reqBody = JSON.stringify({ lines: lines });
+        reqHeaders = { 'Content-Type': 'application/json' };
+        textToLog = "Conversation Mode: " + lines.length + " lines";
+    }
 
     setStatus('busy', 'Generating...');
     generateBtn.disabled = true;
@@ -308,43 +532,21 @@ generateBtn.addEventListener('click', async () => {
     loadingDiv.classList.remove('hidden');
 
     try {
-        const formData = new FormData();
-        formData.append('text', text);
-        formData.append('engine', engineSelect.value);
-        formData.append('voice_id', voiceSelect.value);
-        formData.append('tone', toneSelect.value);
-        formData.append('apply_fx', fxCheckbox.checked);
-        formData.append('hesitation', hesitationSlider.value);
-        formData.append('breathiness', breathinessSlider.value);
-        // ElevenLabs voice tuning parameters
-        if (engineSelect.value === 'elevenlabs') {
-            formData.append('el_stability', (elStabilitySlider.value / 100).toFixed(2));
-            formData.append('el_similarity', (elSimilaritySlider.value / 100).toFixed(2));
-            formData.append('el_style', (elStyleSlider.value / 100).toFixed(2));
-            formData.append('el_boost', elBoostCheckbox.checked);
-        }
-
-        if (engineSelect.value === 'chatterbox') {
-            if (refAudioInput.files.length > 0) {
-                formData.append('ref_audio', refAudioInput.files[0]);
-            }
-            // Chatterbox advanced generation parameters
-            formData.append('cb_exaggeration', (cbExaggerationSlider.value / 100).toFixed(2));
-            formData.append('cb_cfg_weight', (cbCfgWeightSlider.value / 100).toFixed(2));
-            formData.append('cb_temperature', (cbTemperatureSlider.value / 100).toFixed(2));
-            formData.append('cb_repetition_penalty', (cbRepPenaltySlider.value / 100).toFixed(2));
-        }
-
-        const resp = await fetch('/api/synthesize', {
+        const fetchOptions = {
             method: 'POST',
-            body: formData
-        });
+            body: reqBody
+        };
+        if (Object.keys(reqHeaders).length > 0) {
+            fetchOptions.headers = reqHeaders;
+        }
+        
+        const resp = await fetch(endpoint, fetchOptions);
 
         const data = await resp.json();
         if (!resp.ok) throw new Error(data.detail);
 
         renderOutput(data);
-        addToHistory(data, text);
+        addToHistory(data, textToLog);
         setStatus('ready', 'Ready');
 
     } catch (err) {
