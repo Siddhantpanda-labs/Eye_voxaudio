@@ -519,7 +519,10 @@ generateBtn.addEventListener('click', async () => {
         if (lines.length === 0) return alert('Add at least one line of dialogue.');
         
         endpoint = '/api/synthesize_conversation';
-        reqBody = JSON.stringify({ lines: lines });
+        reqBody = JSON.stringify({ 
+            lines: lines,
+            apply_fx: fxCheckbox.checked
+        });
         reqHeaders = { 'Content-Type': 'application/json' };
         textToLog = "Conversation Mode: " + lines.length + " lines";
     }

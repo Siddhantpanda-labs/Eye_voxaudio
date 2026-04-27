@@ -53,6 +53,7 @@ class ConvLine(BaseModel):
 
 class ConvRequest(BaseModel):
     lines: List[ConvLine]
+    apply_fx: bool = False
 
 def get_elevenlabs_key():
     key_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "elevenlabs.key.txt")
@@ -413,6 +414,17 @@ def synthesize_conversation(req: ConvRequest):
             final_filename = f"take_conv_{gen_id}.wav"
             final_path = os.path.join(output_dir, final_filename)
             torchaudio.save(final_path, combined, target_sr)
+            
+            if req.apply_fx:
+                try:
+                    from fx.audio_fx import AudioFX
+                    fx = AudioFX()
+                    fx_path = os.path.join(output_dir, f"fx_{final_filename}")
+                    fx.apply_mastering(final_path, fx_path)
+                    if os.path.exists(fx_path):
+                        os.replace(fx_path, final_path)
+                except Exception as e:
+                    print(f"FX failed in conversation mode: {e}")
             
         for p in audio_paths:
             if os.path.exists(p):
