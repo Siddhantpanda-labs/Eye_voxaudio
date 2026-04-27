@@ -66,6 +66,14 @@ def get_elevenlabs_key():
 def read_root():
     return FileResponse(os.path.join(static_dir, "index.html"))
 
+def convert_to_mp3(wav_path: str, mp3_path: str):
+    import subprocess
+    import shutil
+    ffmpeg_cmd = r"D:\Program Files\ThirdParty\ffmpeg\bin\ffmpeg.exe"
+    if not os.path.exists(ffmpeg_cmd):
+        ffmpeg_cmd = shutil.which("ffmpeg") or "ffmpeg"
+    subprocess.run([ffmpeg_cmd, "-y", "-i", wav_path, "-b:a", "192k", mp3_path], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
 @app.get("/api/voices")
 def list_voices():
     """Fetch available voices from ElevenLabs API."""
@@ -288,6 +296,7 @@ def synthesize(
             # Clean up the converted reference file only if it was a one-off upload
             if not cb_voice_id and speaker_wav and os.path.exists(speaker_wav):
                 os.remove(speaker_wav)
+                
         else:
             raise HTTPException(status_code=400, detail="Unknown engine selected.")
         
@@ -307,6 +316,14 @@ def synthesize(
                 os.rename(raw_path, final_path)
         else:
             os.rename(raw_path, final_path)
+            
+        mp3_filename = f"take_{gen_id}.mp3"
+        mp3_path = os.path.join(output_dir, mp3_filename)
+        try:
+            convert_to_mp3(final_path, mp3_path)
+            final_filename = mp3_filename
+        except Exception as e:
+            print(f"MP3 conversion failed: {e}")
         
         return {
             "id": gen_id,
@@ -429,6 +446,14 @@ def synthesize_conversation(req: ConvRequest):
         for p in audio_paths:
             if os.path.exists(p):
                 os.remove(p)
+                
+        mp3_filename = f"take_conv_{gen_id}.mp3"
+        mp3_path = os.path.join(output_dir, mp3_filename)
+        try:
+            convert_to_mp3(final_path, mp3_path)
+            final_filename = mp3_filename
+        except Exception as e:
+            print(f"MP3 conversion failed: {e}")
                 
         return {
             "id": gen_id,

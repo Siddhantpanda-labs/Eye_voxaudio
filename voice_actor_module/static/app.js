@@ -60,7 +60,6 @@ const cbTemperatureVal = document.getElementById('cb-temperature-val');
 const cbRepPenaltySlider = document.getElementById('cb-rep-penalty');
 const cbRepPenaltyVal = document.getElementById('cb-rep-penalty-val');
 const generateBtn = document.getElementById('generate-btn');
-const loadingDiv = document.getElementById('loading');
 const outputCard = document.getElementById('current-output');
 const emptyState = document.getElementById('empty-state');
 const intentBadges = document.getElementById('intent-badges');
@@ -166,6 +165,7 @@ function addConvLine() {
     const lineEl = clone.querySelector('.conv-line');
     const engineSelect = clone.querySelector('.conv-engine');
     const voiceSelect = clone.querySelector('.conv-voice');
+    const fishVoiceInput = clone.querySelector('.conv-fish-voice');
     const removeBtn = clone.querySelector('.remove-line-btn');
     
     function populateVoices() {
@@ -532,7 +532,6 @@ generateBtn.addEventListener('click', async () => {
     generateBtn.innerHTML = `<span class="loader-bars" style="height:18px;gap:2px"><span></span><span></span><span></span></span> Directing...`;
     outputCard.classList.add('hidden');
     emptyState.classList.add('hidden');
-    loadingDiv.classList.remove('hidden');
 
     try {
         const fetchOptions = {
@@ -556,7 +555,6 @@ generateBtn.addEventListener('click', async () => {
         alert('Error: ' + err.message);
         setStatus('ready', 'Error');
     } finally {
-        loadingDiv.classList.add('hidden');
         generateBtn.disabled = false;
         generateBtn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg> Generate Take`;
     }
@@ -634,7 +632,7 @@ downloadBtn.addEventListener('click', () => {
     if (!currentAudioUrl) return;
     const a = document.createElement('a');
     a.href = currentAudioUrl;
-    a.download = 'voxstudio_take.wav';
+    a.download = 'voxstudio_take.mp3';
     a.click();
 });
 
